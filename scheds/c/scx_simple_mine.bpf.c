@@ -24,19 +24,18 @@
 
 char _license[] SEC("license") = "GPL";
 
-const volatile bool fifo_sched;
 const volatile bool switch_partial;
 
-static u64 vtime_now;
-struct user_exit_info uei;
+UEI_DEFINE(uei);
 
 #define SHARED_DSQ 0
+#define NSEC_PER_MSEC ((u64)1e6)
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(key_size, sizeof(u32));
 	__uint(value_size, sizeof(u64));
-	__uint(max_entries, 2);			/* [local, global] */
+	__uint(max_entries, 2);			/* [local, global] */ // cambio questo per array più lungo
 } stats SEC(".maps");
 
 static void stat_inc(u32 idx)
@@ -46,9 +45,20 @@ static void stat_inc(u32 idx)
 		(*cnt_p)++;
 }
 
-static inline bool vtime_before(u64 a, u64 b)
-{
-	return (s64)(a - b) < 0;
+
+static u64 get_time_slice(struct task_struct *task){
+	int msecs = task->prio - 100;
+	// priority in standard goes from 100 and 139
+	// so now time go 0 and 39
+	msecs = 40 - msecs;
+	// reversing because lower priority = more time for now
+	// it goes from 40 to 1
+	if(msecs == 40)
+		msecs = 20;
+	else
+		msecs = 10;
+	// square last result
+	return msecs * NSEC_PER_MSEC;
 }
 
 s32 BPF_STRUCT_OPS(simple_mine_select_cpu, struct task_struct *p, s32 prev_cpu, u64 wake_flags)
@@ -59,7 +69,7 @@ s32 BPF_STRUCT_OPS(simple_mine_select_cpu, struct task_struct *p, s32 prev_cpu, 
 	cpu = scx_bpf_select_cpu_dfl(p, prev_cpu, wake_flags, &is_idle);
 	if (is_idle) {
 		stat_inc(0);	/* count local queueing */
-		scx_bpf_dispatch(p, SCX_DSQ_LOCAL, SCX_SLICE_DFL, 0);
+		scx_bpf_dispatch(p, SCX_DSQ_LOCAL, get_time_slice(p), 0);
 	}
 
 	return cpu;
@@ -67,66 +77,20 @@ s32 BPF_STRUCT_OPS(simple_mine_select_cpu, struct task_struct *p, s32 prev_cpu, 
 
 void BPF_STRUCT_OPS(simple_mine_enqueue, struct task_struct *p, u64 enq_flags)
 {
-	stat_inc(1);	/* count global queueing */
+	stat_inc(1);	/* count global queueing -> data printed */
 
-	if (fifo_sched) {
-		scx_bpf_dispatch(p, SHARED_DSQ, SCX_SLICE_DFL, enq_flags);
-	} else {
-		u64 vtime = p->scx.dsq_vtime;
-
-		/*
-		 * Limit the amount of budget that an idling task can accumulate
-		 * to one slice.
-		 */
-		if (vtime_before(vtime, vtime_now - SCX_SLICE_DFL))
-			vtime = vtime_now - SCX_SLICE_DFL;
-
-		scx_bpf_dispatch_vtime(p, SHARED_DSQ, SCX_SLICE_DFL, vtime,
-				       enq_flags);
-	}
+	scx_bpf_dispatch(p, SHARED_DSQ, get_time_slice(p), enq_flags);
 }
 
 void BPF_STRUCT_OPS(simple_mine_dispatch, s32 cpu, struct task_struct *prev)
 {
+	// TODO to change ?
 	scx_bpf_consume(SHARED_DSQ);
 }
 
-void BPF_STRUCT_OPS(simple_mine_running, struct task_struct *p)
-{
-	if (fifo_sched)
-		return;
-
-	/*
-	 * Global vtime always progresses forward as tasks start executing. The
-	 * test and update can be performed concurrently from multiple CPUs and
-	 * thus racy. Any error should be contained and temporary. Let's just
-	 * live with it.
-	 */
-	if (vtime_before(vtime_now, p->scx.dsq_vtime))
-		vtime_now = p->scx.dsq_vtime;
-}
-
-void BPF_STRUCT_OPS(simple_mine_stopping, struct task_struct *p, bool runnable)
-{
-	if (fifo_sched)
-		return;
-
-	/*
-	 * Scale the execution time by the inverse of the weight and charge.
-	 *
-	 * Note that the default yield implementation yields by setting
-	 * @p->scx.slice to zero and the following would treat the yielding task
-	 * as if it has consumed all its slice. If this penalizes yielding tasks
-	 * too much, determine the execution time by taking explicit timestamps
-	 * instead of depending on @p->scx.slice.
-	 */
-	p->scx.dsq_vtime += (SCX_SLICE_DFL - p->scx.slice) * 100 / p->scx.weight;
-}
-
-void BPF_STRUCT_OPS(simple_mine_enable, struct task_struct *p)
-{
-	p->scx.dsq_vtime = vtime_now;
-}
+void BPF_STRUCT_OPS(simple_mine_running, struct task_struct *p){ /* removed for fifo */ }
+void BPF_STRUCT_OPS(simple_mine_stopping, struct task_struct *p, bool runnable) { /* removed for fifo */ }
+void BPF_STRUCT_OPS(simple_mine_enable, struct task_struct *p){ /* removed for fifo */ }
 
 s32 BPF_STRUCT_OPS_SLEEPABLE(simple_mine_init)
 {
@@ -138,7 +102,7 @@ s32 BPF_STRUCT_OPS_SLEEPABLE(simple_mine_init)
 
 void BPF_STRUCT_OPS(simple_mine_exit, struct scx_exit_info *ei)
 {
-	uei_record(&uei, ei);
+	UEI_RECORD(uei, ei);
 }
 
 SEC(".struct_ops.link")
@@ -151,5 +115,6 @@ struct sched_ext_ops simple_mine_ops = {
 	.enable			= (void *)simple_mine_enable,
 	.init			= (void *)simple_mine_init,
 	.exit			= (void *)simple_mine_exit,
+	.flags			= SCX_OPS_ENQ_LAST | SCX_OPS_ENQ_EXITING | SCX_OPS_KEEP_BUILTIN_IDLE,
 	.name			= "simple_mine",
 };

@@ -19,7 +19,6 @@ const char help_fmt[] =
 "\n"
 "Usage: %s [-f] [-p]\n"
 "\n"
-"  -f            Use FIFO scheduling instead of weighted vtime scheduling\n"
 "  -p            Switch only tasks on SCHED_EXT policy intead of all\n"
 "  -h            Display this help and exit\n";
 
@@ -64,11 +63,8 @@ int main(int argc, char **argv)
 	skel = scx_simple_mine__open();
 	SCX_BUG_ON(!skel, "Failed to open skel");
 
-	while ((opt = getopt(argc, argv, "fph")) != -1) {
+	while ((opt = getopt(argc, argv, "ph")) != -1) {
 		switch (opt) {
-		case 'f':
-			skel->rodata->fifo_sched = true;
-			break;
 		case 'p':
 			skel->rodata->switch_partial = true;
 			break;
@@ -78,12 +74,10 @@ int main(int argc, char **argv)
 		}
 	}
 
-	SCX_BUG_ON(scx_simple_mine__load(skel), "Failed to load skel");
+	SCX_OPS_LOAD(skel, simple_mine_ops, scx_simple_mine, uei);
+	link = SCX_OPS_ATTACH(skel, simple_mine_ops);
 
-	link = bpf_map__attach_struct_ops(skel->maps.simple_mine_ops);
-	SCX_BUG_ON(!link, "Failed to attach struct_ops");
-
-	while (!exit_req && !uei_exited(&skel->bss->uei)) {
+	while (!exit_req && !UEI_EXITED(skel, uei)) {
 		__u64 stats[2];
 
 		read_stats(skel, stats);
@@ -93,7 +87,7 @@ int main(int argc, char **argv)
 	}
 
 	bpf_link__destroy(link);
-	uei_print(&skel->bss->uei);
+	UEI_REPORT(skel, uei);
 	scx_simple_mine__destroy(skel);
 	return 0;
 }
