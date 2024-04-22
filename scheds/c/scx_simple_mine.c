@@ -12,6 +12,8 @@
 #include <scx/common.h>
 #include "scx_simple_mine.bpf.skel.h"
 
+#define STAT_SIZE 4
+
 const char help_fmt[] =
 "A simple sched_ext scheduler.\n"
 "\n"
@@ -32,19 +34,19 @@ static void sigint_handler(int simple)
 static void read_stats(struct scx_simple_mine *skel, __u64 *stats)
 {
 	int nr_cpus = libbpf_num_possible_cpus();
-	__u64 cnts[2][nr_cpus];
+	__u64 cnts[STAT_SIZE][nr_cpus];
 	__u32 idx;
 
-	memset(stats, 0, sizeof(stats[0]) * 2);
+	memset(stats, 0, sizeof(stats[0]) * STAT_SIZE);
 
-	for (idx = 0; idx < 2; idx++) {
+	for (idx = 0; idx < STAT_SIZE; idx++) {
 		int ret, cpu;
 
 		ret = bpf_map_lookup_elem(bpf_map__fd(skel->maps.stats),
 					  &idx, cnts[idx]);
 		if (ret < 0)
 			continue;
-		for (cpu = 0; cpu < nr_cpus; cpu++)
+		for (cpu = 0; cpu < nr_cpus; cpu++) //it is for single cpu and then added
 			stats[idx] += cnts[idx][cpu];
 	}
 }
@@ -78,10 +80,10 @@ int main(int argc, char **argv)
 	link = SCX_OPS_ATTACH(skel, simple_mine_ops);
 
 	while (!exit_req && !UEI_EXITED(skel, uei)) {
-		__u64 stats[2];
+		__u64 stats[STAT_SIZE];
 
 		read_stats(skel, stats);
-		printf("local=%llu global=%llu\n", stats[0], stats[1]);
+		printf("local=%llu global=%llu little=%llu big=%llu\n", stats[0], stats[1], stats[2], stats[3]);
 		fflush(stdout);
 		sleep(1);
 	}

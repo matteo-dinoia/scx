@@ -35,13 +35,13 @@ struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(key_size, sizeof(u32));
 	__uint(value_size, sizeof(u64));
-	__uint(max_entries, 2);			/* [local, global] */ // cambio questo per array più lungo
+	__uint(max_entries, 4);			/* [local, global] */ // cambio questo per array più lungo
 } stats SEC(".maps");
 
 static void stat_inc(u32 idx)
 {
 	u64 *cnt_p = bpf_map_lookup_elem(&stats, &idx);
-	if (cnt_p)
+	if (cnt_p) //if not null
 		(*cnt_p)++;
 }
 
@@ -53,10 +53,14 @@ static u64 get_time_slice(struct task_struct *task){
 	msecs = 40 - msecs;
 	// reversing because lower priority = more time for now
 	// it goes from 40 to 1
-	if(msecs == 40)
+	if(msecs == 40){
+		stat_inc(3);
 		msecs = 20;
-	else
+	}else{
 		msecs = 10;
+		stat_inc(2);
+	}
+
 	// square last result
 	return msecs * NSEC_PER_MSEC;
 }
