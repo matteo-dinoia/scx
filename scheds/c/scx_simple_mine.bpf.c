@@ -35,13 +35,13 @@ struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(key_size, sizeof(u32));
 	__uint(value_size, sizeof(u64));
-	__uint(max_entries, 4);			/* [local, global] */ // cambio questo per array più lungo
+	__uint(max_entries, 4);			/* [local, global, big, small] can be changed */
 } stats SEC(".maps");
 
 static void stat_inc(u32 idx)
 {
 	u64 *cnt_p = bpf_map_lookup_elem(&stats, &idx);
-	if (cnt_p) //if not null
+	if (cnt_p) //if not null -> if is in map
 		(*cnt_p)++;
 }
 
@@ -88,7 +88,6 @@ void BPF_STRUCT_OPS(simple_mine_enqueue, struct task_struct *p, u64 enq_flags)
 
 void BPF_STRUCT_OPS(simple_mine_dispatch, s32 cpu, struct task_struct *prev)
 {
-	// TODO to change ?
 	scx_bpf_consume(SHARED_DSQ);
 }
 
