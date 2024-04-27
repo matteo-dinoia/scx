@@ -47,21 +47,19 @@ static void stat_inc(u32 idx)
 
 
 static u64 get_time_slice(struct task_struct *task){
-	int msecs = task->prio - 100;
-	// priority in standard goes from 100 and 139
-	// so now time go 0 and 39
-	msecs = 40 - msecs;
-	// reversing because lower priority = more time for now
-	// it goes from 40 to 1
-	if(msecs == 40){
+	// priority in standard goes with range [100, 139]
+	// convert to normal form with range [-20, 19]
+	const int norm_prio = task->prio - 120;
+
+	int msecs
+	if(norm_prio <= 0){
 		stat_inc(3);
 		msecs = 20;
 	}else{
-		msecs = 10;
 		stat_inc(2);
+		msecs = 10;
 	}
 
-	// square last result
 	return msecs * NSEC_PER_MSEC;
 }
 
